@@ -1,0 +1,167 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: auto-vpa-creation
+  annotations:
+    policies.kyverno.io/title: Add default VPA
+    policies.kyverno.io/category: Cost Optimization
+    policies.kyverno.io/subject: Vertical Pod Autoscaler
+    policies.kyverno.io/description: >-
+      This policy creates a Vertical Pod Autoscaler for each new and existing workload unless it already has one or is using a Horizontal Pod Autoscaler.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+  - name: create-default-vpa-one-container
+    match:
+      any:
+      - resources:
+          kinds:
+          - DaemonSet
+          - Deployment
+          - StatefulSet
+    context:
+    - name: existingHPA
+      apiCall:
+        urlPath: '/apis/autoscaling/v2/namespaces/{{request.namespace}}/horizontalpodautoscalers'
+        jmesPath: "items[].spec.scaleTargetRef.name"
+    - name: existingVPA
+      apiCall:
+        urlPath: "/apis/autoscaling.k8s.io/v1/namespaces/{{request.namespace}}/verticalpodautoscalers"
+        jmesPath: "items[].spec.targetRef.name"
+    - name: autoVPACount
+      apiCall:
+        urlPath: '/apis/autoscaling.k8s.io/v1/namespaces/{{request.namespace}}/verticalpodautoscalers'
+        jmesPath: items[?metadata.labels."auto-vpa"] | [?spec.targetRef.name=='{{request.object.metadata.name}}'] | length(@)
+    - name: totalContainers
+      variable:
+        value: '{{ request.object.spec.template.spec.containers }}'
+        jmesPath: 'length(@)'
+    preconditions:
+      all:
+      - key: '{{request.operation}}'
+        operator: NotEquals
+        value: DELETE
+      - key: '{{request.object.metadata.name}}'
+        operator: AllNotIn
+        value: '{{existingHPA}}'
+      - key: '{{totalContainers}}'
+        operator: Equals
+        value: "1"
+      any:
+      - key: '{{request.object.metadata.name}}'
+        operator: AllNotIn
+        value: '{{existingVPA}}'
+      - key: '{{ autoVPACount }}'
+        operator: Equals
+        value: 1
+    generate:
+      synchronize: true
+      generateExisting: true  # Ensure VPAs are created for existing workloads
+      apiVersion: autoscaling.k8s.io/v1
+      kind: VerticalPodAutoscaler
+      name: '{{request.object.metadata.name}}-auto-vpa'
+      namespace: '{{request.object.metadata.namespace}}'
+      data:
+        metadata:
+          labels:
+            auto-vpa: "true"
+          ownerReferences:
+          - apiVersion: apps/v1
+            kind: '{{request.object.kind}}'
+            name: '{{request.object.metadata.name}}'
+            uid: '{{request.object.metadata.uid}}'
+        spec:
+          targetRef:
+            apiVersion: "apps/v1"
+            kind: '{{request.object.kind}}'
+            name: '{{request.object.metadata.name}}'
+          updatePolicy:
+            updateMode: "Auto"
+          resourcePolicy:
+            containerPolicies:
+              - containerName: "*"
+                minAllowed:
+                  cpu: 10m
+                  memory: 32Mi
+                maxAllowed:
+                  cpu: '{{request.object.spec.template.spec.containers[0].resources.requests.cpu}}'
+                  memory: '{{request.object.spec.template.spec.containers[0].resources.requests.memory}}'
+                controlledResources: ["cpu", "memory"]
+                controlledValues: "RequestsOnly"
+  - name: create-default-vpa-multiple-containers
+    match:
+      any:
+      - resources:
+          kinds:
+          - DaemonSet
+          - Deployment
+          - StatefulSet
+    context:
+    - name: existingHPA
+      apiCall:
+        urlPath: "/apis/autoscaling/v2/namespaces/{{request.namespace}}/horizontalpodautoscalers"
+        jmesPath: "items[].spec.scaleTargetRef.name"
+    - name: existingVPA
+      apiCall:
+        urlPath: "/apis/autoscaling.k8s.io/v1/namespaces/{{request.namespace}}/verticalpodautoscalers"
+        jmesPath: "items[].spec.targetRef.name"
+    - name: autoVPACount
+      apiCall:
+        urlPath: '/apis/autoscaling.k8s.io/v1/namespaces/{{request.namespace}}/verticalpodautoscalers'
+        jmesPath: items[?metadata.labels."auto-vpa"] | [?spec.targetRef.name=='{{request.object.metadata.name}}'] | length(@)
+    - name: totalContainers
+      variable:
+        value: '{{request.object.spec.template.spec.containers}}'
+        jmesPath: 'length(@)'
+    preconditions:
+      all:
+      - key: '{{request.operation}}'
+        operator: NotEquals
+        value: DELETE
+      - key: '{{request.object.metadata.name}}'
+        operator: AllNotIn
+        value: '{{existingHPA}}'
+      - key: '{{totalContainers}}'
+        operator: NotEquals
+        value: "1"
+      any:
+      - key: '{{request.object.metadata.name}}'
+        operator: AllNotIn
+        value: '{{existingVPA}}'
+      - key: '{{ autoVPACount }}'
+        operator: Equals
+        value: 1
+    generate:
+      synchronize: true
+      generateExisting: true  # Ensure VPAs are created for existing workloads
+      apiVersion: autoscaling.k8s.io/v1
+      kind: VerticalPodAutoscaler
+      name: '{{request.object.metadata.name}}-auto-vpa'
+      namespace: '{{request.object.metadata.namespace}}'
+      data:
+        metadata:
+          labels:
+            auto-vpa: "true"
+          ownerReferences:
+          - apiVersion: apps/v1
+            kind: '{{request.object.kind}}'
+            name: '{{request.object.metadata.name}}'
+            uid: '{{request.object.metadata.uid}}'
+        spec:
+          targetRef:
+            apiVersion: "apps/v1"
+            kind: '{{request.object.kind}}'
+            name: '{{request.object.metadata.name}}'
+          updatePolicy:
+            updateMode: "Auto"
+          resourcePolicy:
+            containerPolicies:
+              - containerName: "*"
+                minAllowed:
+                  cpu: 10m
+                  memory: 32Mi
+                controlledResources: ["cpu", "memory"]
+                controlledValues: "RequestsOnly"
+

@@ -1,0 +1,14 @@
+# kyverno-vpa-access.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno-vpa-access
+rules:
+  - apiGroups:
+      - "autoscaling.k8s.io"
+    resources:
+      - verticalpodautoscalers
+    verbs:
+      - get
+      - list
+
